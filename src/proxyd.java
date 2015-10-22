@@ -1,5 +1,7 @@
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -22,40 +24,42 @@ public class proxyd {
 		ServerSocket serverSocket = null;	
 		
 		// The activity state of the proxy
-        boolean listening = true;
+		boolean listening = true;
 
-        // The port requests are received through
-        int port = 50055;	// I am student 55 in the 325 list
+		// The port requests are received through
+		int port = 50055;	// I am student 55 in the 325 list
        
-        // Grab port number from arguments
-        for (int i = 0; i < args.length; i++) {
-        	// Check for -port argument
-        	if (args[i].equals("-port")) {
-        		// Grab the port number
-        		port = Integer.parseInt(args[i+1]);
-        		break;
-        	}
-        }
+		// Grab port number from arguments
+		for (int i = 0; i < args.length; i++) {
+			// Check for -port argument
+			if (args[i].equals("-port")) {
+				// Grab the port number
+				port = Integer.parseInt(args[i+1]);
+				break;
+			}
+		}
 
-        try {
-        	// Begin listening on the given port
-            serverSocket = new ServerSocket(port);
-            System.out.println("Started on port: " + port);
-        } 
-        catch (IOException e) {
-            System.err.println("Could not listen on port " + port);
-            System.exit(-1);
-        }
+		try {
+			// Begin listening on the given port
+			serverSocket = new ServerSocket(port);
+			System.out.println("Started on port: " + port);
+		} 
+		catch (IOException e) {
+			System.err.println("Could not listen on port " + port);
+			System.exit(-1);
+		}
 
-        // Start listening for requests
-        while (listening) {
-        	Socket socket = serverSocket.accept();
+		// Start listening for requests
+		while (listening) {
+        	Socket client = serverSocket.accept();
         	
         	// Create a thread to forward the request
-            new RequestThread(socket).start();
-        }
-        // Clean up
-        serverSocket.close();
+        	new RequestThread(client).start();
+        	//new ResponseThread(client).start();
+		}
+		
+		// Clean up
+		serverSocket.close();
 	}
 	
 	/**
@@ -65,92 +69,132 @@ public class proxyd {
 	private static class RequestThread extends Thread {
 
 		// The socket the request was made on
-	    private final Socket clientSocket;
+		private final Socket client;
 
-	    // The constructor takes the socket the request was made on
-	    public RequestThread(Socket socket) {
-	    	super("RequestThread");
-	        this.clientSocket = socket;
-	    }
+		// The constructor takes the socket the request was made on
+		public RequestThread(Socket client) {
+			super("RequestThread");
+			this.client = client;
+		}
 
-	    // The response thread's behavior while running
-	    public void run() {
-	        try {
-	            // Setup to read the incoming request
-	            InputStream incommingIS = clientSocket.getInputStream();
-	            byte[] b = new byte[8196];
-	            
-	            // Read the request
-	            int len = incommingIS.read(b);
-
-	            if (len > 0) {
-	            	// Print the request
-	                System.out.println("REQUEST" + '\n' + "-------");
-	                System.out.println(new String(b, 0, len));
-	               
-	                // Write request
-	                Socket socket = new Socket("localhost", 80);
-	                OutputStream outgoingOS = socket.getOutputStream();
-	                
-	                for (int i = 0; i < len; i++) {
-	                	outgoingOS.write(b[i]);
-	                	outgoingOS.flush();
-	                }
-
-	            //    outgoingOS.close();
-	            //    incommingIS.close();
-
-	           //     socket.close();
-	              
-	            }
-	         //   incommingIS.close();
+		// The response thread's behavior while running
+		public void run() {
+			
+			try {
+				// Setup to read the incoming request
+				InputStream fromClient = client.getInputStream();
+				byte[] buffer = new byte[8196];
+		            
+				// Read the request
+				int len = fromClient.read(buffer);
+	
+				if (len > 0) {
+					// Print the request
+					System.out.println("REQUEST" + '\n' + "-------");
+					System.out.println(new String(buffer, 0, len));
+					
+					// Open a connection with the server
+					Socket server = new Socket("104.70.57.183", 80);
+					OutputStream toServer = server.getOutputStream();
+					System.out.println("yo");
+					for (int i = 0; i < len; i++) {
+						toServer.write(buffer[i]);
+						toServer.flush();
+					}
+					new ResponseThread(client, server).start();
+					toServer.close();
+					//fromClient.close();
+					//server.close();
+				}
+				//fromClient.close();
 	        }
 	        catch (IOException e) {
 	            e.printStackTrace();
 	        }
-		/*
-	        finally {
+	       /* finally {
 	            try {
-	            	clientSocket.close();
+	            	client.close();
 	            } 
 	            catch (IOException e) {
 	                e.printStackTrace();
 	            }
-	        }
-		*/
+	        } */
+			/*
+			try {
+	            // Read request
+	            InputStream incommingIS = client.getInputStream();
+	            byte[] b = new byte[8196];
+	            int len = incommingIS.read(b);
+
+	            if (len > 0) {
+	                System.out.println("REQUEST"
+	                        + System.getProperty("line.separator") + "-------");
+	                System.out.println(new String(b, 0, len));
+	                
+	                // Write request to Safari server
+	                Socket socket = new Socket("104.70.57.183", 80);
+	                OutputStream outgoingOS = socket.getOutputStream();
+	                outgoingOS.write(b, 0, len);
+
+	                // Copy response
+	                OutputStream incommingOS = client.getOutputStream();
+	                InputStream outgoingIS = socket.getInputStream();
+	                for (int length; (length = outgoingIS.read(b)) != -1;) {
+	                    incommingOS.write(b, 0, length);
+	                }
+
+	                incommingOS.close();
+	                outgoingIS.close();
+	                outgoingOS.close();
+	                incommingIS.close();
+
+	                socket.close();
+	            } else {
+	                incommingIS.close();
+	            }
+	        } catch (IOException e) {
+	            e.printStackTrace();
+	        } finally {
+	            try {
+	                client.close();
+	            } catch (IOException e) {
+	                e.printStackTrace();
+	            }
+	        }*/
 	    }
 	}
 	
 	private static class ResponseThread extends Thread {
 		
-		private final Socket clientSocket;
+		private final Socket client, server;
 		
-		public ResponseThread(Socket socket) {
+		public ResponseThread(Socket client, Socket server) {
 	        super("ResponseThread");
-	        this.clientSocket = socket;
+	        this.client = client;
+	        this.server = server;
 	    }
 		
 		public void run() {
 			// Copy response
 			byte[] b = new byte[8196];
-            OutputStream incommingOS;
             
 			try {
-				incommingOS = clientSocket.getOutputStream();
+				OutputStream toClient = client.getOutputStream();
 			
-	            InputStream outgoingIS = clientSocket.getInputStream();
-	            for (int length; (length = outgoingIS.read(b)) != -1;) {
-	                incommingOS.write(b, 0, length);
+	            InputStream fromServer = server.getInputStream();
+	            for (int length; (length = fromServer.read(b)) != -1;) {
+	                toClient.write(b, 0, length);
 	            }
 	
-	            incommingOS.close();
-	            outgoingIS.close();
+	           	toClient.close();
+	            fromServer.close();
 	            
             } catch (IOException e) {
 				e.printStackTrace();
 			} finally {
 	            try {
-	            	clientSocket.close();
+	            	client.close();
+	            	server.close();
 	            } catch (IOException e) {
 	                e.printStackTrace();
 	            }
