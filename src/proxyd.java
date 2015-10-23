@@ -79,88 +79,42 @@ public class proxyd {
 
 		// The response thread's behavior while running
 		public void run() {
+				try {
+					// Setup to read the incoming request
+					InputStream fromClient = client.getInputStream();
+					byte[] buffer = new byte[8196];
+				            
+					// Read the request
+					int len = fromClient.read(buffer);
 			
-			try {
-				// Setup to read the incoming request
-				InputStream fromClient = client.getInputStream();
-				byte[] buffer = new byte[8196];
-		            
-				// Read the request
-				int len = fromClient.read(buffer);
-	
-				if (len > 0) {
-					// Print the request
-					System.out.println("REQUEST" + '\n' + "-------");
-					System.out.println(new String(buffer, 0, len));
-					
-					// Open a connection with the server
-					Socket server = new Socket("104.70.57.183", 80);
-					OutputStream toServer = server.getOutputStream();
-					System.out.println("yo");
-					for (int i = 0; i < len; i++) {
-						toServer.write(buffer[i]);
-						toServer.flush();
+					if (len > 0) {
+						// Print the request
+						System.out.println("REQUEST: " + System.currentTimeMillis());
+						System.out.println("-------");
+						System.out.println(new String(buffer, 0, len));
+							
+						// Open a connection with the server and spawn a response thread
+						Socket server = new Socket("104.70.57.183", 80);
+						System.out.println("Server connection established: " + System.currentTimeMillis());
+						OutputStream toServer = server.getOutputStream();
+						new ResponseThread(client, server).start();
+						System.out.println("Response thread spawned: " + System.currentTimeMillis());
+							
+						for (int i = 0; i < len; i++) {
+							toServer.write(buffer[i]);
+							toServer.flush();
+						}
+						//toServer.close();
+						//fromClient.close();
+						//server.close();
 					}
-					new ResponseThread(client, server).start();
-					toServer.close();
-					//fromClient.close();
-					//server.close();
-				}
-				//fromClient.close();
-	        }
-	        catch (IOException e) {
-	            e.printStackTrace();
-	        }
-	       /* finally {
-	            try {
-	            	client.close();
-	            } 
-	            catch (IOException e) {
-	                e.printStackTrace();
-	            }
-	        } */
-			/*
-			try {
-	            // Read request
-	            InputStream incommingIS = client.getInputStream();
-	            byte[] b = new byte[8196];
-	            int len = incommingIS.read(b);
-
-	            if (len > 0) {
-	                System.out.println("REQUEST"
-	                        + System.getProperty("line.separator") + "-------");
-	                System.out.println(new String(b, 0, len));
-	                
-	                // Write request to Safari server
-	                Socket socket = new Socket("104.70.57.183", 80);
-	                OutputStream outgoingOS = socket.getOutputStream();
-	                outgoingOS.write(b, 0, len);
-
-	                // Copy response
-	                OutputStream incommingOS = client.getOutputStream();
-	                InputStream outgoingIS = socket.getInputStream();
-	                for (int length; (length = outgoingIS.read(b)) != -1;) {
-	                    incommingOS.write(b, 0, length);
-	                }
-
-	                incommingOS.close();
-	                outgoingIS.close();
-	                outgoingOS.close();
-	                incommingIS.close();
-
-	                socket.close();
-	            } else {
-	                incommingIS.close();
-	            }
-	        } catch (IOException e) {
-	            e.printStackTrace();
-	        } finally {
-	            try {
-	                client.close();
-	            } catch (IOException e) {
-	                e.printStackTrace();
-	            }
-	        }*/
+					else {
+						//fromClient.close();
+					}
+		        }
+		        catch (IOException e) {
+		            e.printStackTrace();
+		        }
 	    }
 	}
 	
@@ -180,22 +134,26 @@ public class proxyd {
             
 			try {
 				OutputStream toClient = client.getOutputStream();
-			
-	            InputStream fromServer = server.getInputStream();
-	            for (int length; (length = fromServer.read(b)) != -1;) {
-	                toClient.write(b, 0, length);
-	            }
-	
-	           	toClient.close();
-	            fromServer.close();
+				InputStream fromServer = server.getInputStream();
 	            
-            } catch (IOException e) {
+				for (int length; (length = fromServer.read(b)) != -1;) {
+					toClient.write(b, 0, length);
+				}
+	
+				toClient.close();
+				fromServer.close();
+				System.out.println("Streams closed: " + System.currentTimeMillis());
+            } 
+			catch (IOException e) {
 				e.printStackTrace();
-			} finally {
+			}
+			finally {
 	            try {
 	            	client.close();
 	            	server.close();
-	            } catch (IOException e) {
+	            	System.out.println("Sockets closed: " + System.currentTimeMillis());
+	            } 
+	            catch (IOException e) {
 	                e.printStackTrace();
 	            }
 	        }
