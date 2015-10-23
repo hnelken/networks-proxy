@@ -5,6 +5,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.InetAddress;
 
 /**
  * This class serves as a simple web proxy that accepts GET and POST requests.
@@ -55,7 +56,6 @@ public class proxyd {
         	
         	// Create a thread to forward the request
         	new RequestThread(client).start();
-        	//new ResponseThread(client).start();
 		}
 		
 		// Clean up
@@ -81,24 +81,36 @@ public class proxyd {
 		public void run() {
 				try {
 					// Setup to read the incoming request
+					BufferedReader clientOutput = new BufferedReader(new InputStreamReader(client.getInputStream()));
 					InputStream fromClient = client.getInputStream();
 					byte[] buffer = new byte[8196];
-				            
+					
+					
 					// Read the request
 					int len = fromClient.read(buffer);
 			
 					if (len > 0) {
 						// Print the request
+						String request = new String(buffer, 0, len);
 						System.out.println("REQUEST: " + System.currentTimeMillis());
 						System.out.println("-------");
-						System.out.println(new String(buffer, 0, len));
-							
+						System.out.println(request);
+						
+						// Parse request for hostname
+						String[] lines = request.split("\n");
+						String[] tokens = lines[0].split(" ");
+						String hostname = tokens[1];
+						System.out.println("Hostname is: " + hostname);
+						
+						// Do a DNS lookup of intended host
+						InetAddress address = InetAddress.getByName(hostname);
+						
 						// Open a connection with the server and spawn a response thread
-						Socket server = new Socket("104.70.57.183", 80);
-						System.out.println("Server connection established: " + System.currentTimeMillis());
+						Socket server = new Socket(address.getHostAddress(), 80);
+						System.out.println("Connected to host " + hostname + ": " + address.getHostAddress());
 						OutputStream toServer = server.getOutputStream();
 						new ResponseThread(client, server).start();
-						System.out.println("Response thread spawned: " + System.currentTimeMillis());
+						System.out.println("Response thread spawned");
 							
 						for (int i = 0; i < len; i++) {
 							toServer.write(buffer[i]);
