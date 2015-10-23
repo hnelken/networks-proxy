@@ -46,6 +46,7 @@ public class proxyd {
 			System.out.println("Started on port: " + port);
 		} 
 		catch (IOException e) {
+        	System.err.println("******LISTENING ERROR*******");
 			System.err.println("Could not listen on port " + port);
 			System.exit(-1);
 		}
@@ -81,25 +82,24 @@ public class proxyd {
 		public void run() {
 				try {
 					// Setup to read the incoming request
-					BufferedReader clientOutput = new BufferedReader(new InputStreamReader(client.getInputStream()));
-					InputStream fromClient = client.getInputStream();
-					byte[] buffer = new byte[8196];
-					
-					
+					BufferedReader fromClient = new BufferedReader(new InputStreamReader(client.getInputStream()));
+					//InputStream fromClient = client.getInputStream();
+					//byte[] buffer = new byte[8196];
+					char[] buff = new char[4048];
 					// Read the request
-					int len = fromClient.read(buffer);
+					int length = fromClient.read(buff);
 			
-					if (len > 0) {
+					if (length > 0) {
 						// Print the request
-						String request = new String(buffer, 0, len);
-						System.out.println("REQUEST: " + System.currentTimeMillis());
+						String request = new String(buff, 0, length);
+						System.out.println("REQUEST");
 						System.out.println("-------");
 						System.out.println(request);
 						
 						// Parse request for hostname
-						String[] lines = request.split("\n");
-						String[] tokens = lines[0].split(" ");
-						String hostname = tokens[1];
+						String[] lines = request.split("\n");	// Split into separate lines
+						String[] tokens = lines[1].split(" ");	// Split the "Host: ..." line on the space
+						String hostname = tokens[1].trim();			// Take the second token (... above) as the hostname
 						System.out.println("Hostname is: " + hostname);
 						
 						// Do a DNS lookup of intended host
@@ -112,19 +112,21 @@ public class proxyd {
 						new ResponseThread(client, server).start();
 						System.out.println("Response thread spawned");
 							
-						for (int i = 0; i < len; i++) {
-							toServer.write(buffer[i]);
+						// Write to server
+						for (int i = 0; i < length; i++) {
+							toServer.write(buff[i]);
 							toServer.flush();
 						}
-						//toServer.close();
-						//fromClient.close();
+						toServer.close();
+						fromClient.close();
 						//server.close();
 					}
 					else {
-						//fromClient.close();
+						fromClient.close();
 					}
 		        }
 		        catch (IOException e) {
+	            	System.err.println("******REQUEST ERROR*******");
 		            e.printStackTrace();
 		        }
 	    }
@@ -148,24 +150,27 @@ public class proxyd {
 				OutputStream toClient = client.getOutputStream();
 				InputStream fromServer = server.getInputStream();
 	            
-				for (int length; (length = fromServer.read(b)) != -1;) {
+				int length;
+				while ((length = fromServer.read(b)) != -1) {
 					toClient.write(b, 0, length);
 				}
 	
 				toClient.close();
 				fromServer.close();
-				System.out.println("Streams closed: " + System.currentTimeMillis());
+				System.out.println("Streams close\n");
             } 
 			catch (IOException e) {
+            	System.err.println("******RESPONSE ERROR*******");
 				e.printStackTrace();
 			}
 			finally {
 	            try {
 	            	client.close();
 	            	server.close();
-	            	System.out.println("Sockets closed: " + System.currentTimeMillis());
+	            	System.out.println("Sockets closed\n");
 	            } 
 	            catch (IOException e) {
+	            	System.err.println("******CLOSING ERROR*******");
 	                e.printStackTrace();
 	            }
 	        }
