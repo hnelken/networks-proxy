@@ -81,18 +81,15 @@ public class proxyd {
 		// The response thread's behavior while running
 		public void run() {
 			try {
-				// Setup to read the incoming request
+				// Char buffer (requests are always text only)
 				char[] buff = new char[4048];
 				BufferedReader fromClient = new BufferedReader(new InputStreamReader(client.getInputStream()));
 				
 				// Read the request and check the contents
-				int length = fromClient.read(buff);
+				int length = (client.isClosed()) ? 0 : fromClient.read(buff); 
 				
 				if (length > 0) {
 					
-					// Parse the request for the hostname
-					String hostname = parseRequestForHostname(buff, length);
-					/*
 					// Print the request
 					String request = new String(buff, 0, length);
 					System.out.println("REQUEST");
@@ -103,18 +100,16 @@ public class proxyd {
 					String[] lines = request.split("\n");	// Split the headers into separate lines
 					String[] tokens = lines[1].split(" ");	// Split the "Host: ..." header on the space
 					String hostname = tokens[1].trim();		// Take the second token as the hostname
-					System.out.println("Hostname is: " + hostname + '\n'); */
 					
 					// Do a DNS lookup of intended host
 					InetAddress address = InetAddress.getByName(hostname);
+					String hostAddress = address.getHostAddress();
 					
 					// Open a connection with the server
-					Socket host = new Socket(address.getHostAddress(), 80);
-					System.out.println("Connected to host " + hostname + ": " + address.getHostAddress() + '\n');
+					Socket host = new Socket(hostAddress, 80);
 					
 					// Spawn a response thread
 					new ResponseThread(client, host).start();
-					System.out.println("Response thread spawned\n");
 
 					// Write the request to the host
 					OutputStream toHost = host.getOutputStream();
@@ -123,95 +118,55 @@ public class proxyd {
 						toHost.flush();
 					}
 				}
-				else {	// Request was bogus, close up
-					fromClient.close();
-					client.close();
-				}
 			}
 			catch (IOException e) {
 				System.err.println("******REQUEST ERROR*******");
 				e.printStackTrace();
 			}
 		}
-		
-		private String parseRequestForHostname(char[] buff, int length) {
-			// Print the request
-			String request = new String(buff, 0, length);
-			System.out.println("REQUEST");
-			System.out.println("-------");
-			System.out.println(request);
-			
-			// Parse request for hostname
-			String[] lines = request.split("\n");	// Split the headers into separate lines
-			String[] tokens = lines[1].split(" ");	// Split the "Host: ..." header on the space
-			String hostname = tokens[1].trim();		// Take the second token as the hostname (without the newline)
-			System.out.println("Hostname is: " + hostname + '\n');
-			return hostname;
-		}
-		
-		private String resolveHostname(String hostname) {
-			boolean cached = true;
-			
-			// TODO: Search cache for hostname
-			cached = false;
-			
-			if (!cached) {
-				// Do a DNS lookup of intended host
-				try {
-					InetAddress address = InetAddress.getByName(hostname);
-				}
-				catch (IOException e) {
-					System.err.println("******DNS ERROR*******");
-					e.printStackTrace();
-				}
-			}
-			
-			return "";
-		}
 	}
 	
+	/**
+	 * This class writes the response from the host back to the client.
+	 * The socket connections are closed when complete.
+	 */
 	private static class ResponseThread extends Thread {
 		
+		// The client and host sockets
 		private final Socket client, host;
 		
+		// Constructor takes client and host sockets
 		public ResponseThread(Socket client, Socket host) {
 	        super("ResponseThread");
 	        this.client = client;
 	        this.host = host;
 	    }
 		
+		// Handles responses from the host
 		public void run() {
-			// Copy response
-			byte[] b = new byte[8196];
+			// Data buffer (responses can be binary data)
+			byte[] buff = new byte[8196];
             
 			try {
-				if (!client.isClosed() && !host.isClosed()) {
-					OutputStream toClient = client.getOutputStream();
-					InputStream fromServer = host.getInputStream();
-		            
-					for (int length; (length = fromServer.read(b)) != -1;) {
-						toClient.write(b, 0, length);
+				// The stream for reading from the host
+				InputStream fromServer = host.getInputStream();
+				// The stream for writing to the client
+				OutputStream toClient = client.getOutputStream();
+		        
+				// As long as the host is putting out data, write it to the client
+				for (int length; !host.isClosed() && (length = fromServer.read(buff)) != -1;) {
+					if (!client.isClosed()) {
+						toClient.write(buff, 0, length);
 					}
-		
-					toClient.close();
-					fromServer.close();
-					System.out.println("Streams close\n");
 				}
+				
+				// Close connections
+				client.close();
+				host.close();
             } 
 			catch (IOException e) {
             	System.err.println("******RESPONSE ERROR*******");
 				e.printStackTrace();
-			}
-			finally {
-	            try {
-	            	client.close();
-	            	host.close();
-	            	System.out.println("Sockets closed\n");
-	            } 
-	            catch (IOException e) {
-	            	System.err.println("******CLOSING ERROR*******");
-	                e.printStackTrace();
-	            }
 			}
 		}
 	}
