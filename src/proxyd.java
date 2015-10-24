@@ -1,10 +1,10 @@
-import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.UnknownHostException;
+import java.util.Hashtable;
 import java.net.InetAddress;
 
 /**
@@ -14,6 +14,8 @@ import java.net.InetAddress;
  */
 public class proxyd {
 
+	private static Hashtable<String, String> cache = new Hashtable<String, String>();
+	
 	/**
 	 * This process accepts all requests and spawns the necessary request threads.
 	 * @param args Use -port <port#> to specify which port requests are accepted on.
@@ -22,7 +24,7 @@ public class proxyd {
 	public static void main(String[] args) throws IOException {
 		
 		// The socket between the client and this proxy
-		ServerSocket serverSocket = null;	
+		ServerSocket serverSocket = null;
 		
 		// The activity state of the proxy
 		boolean listening = true;
@@ -43,10 +45,8 @@ public class proxyd {
 		try {
 			// Begin listening on the given port
 			serverSocket = new ServerSocket(port);
-			System.out.println("Started on port: " + port);
 		} 
 		catch (IOException e) {
-        	System.err.println("******LISTENING ERROR*******");
 			System.err.println("Could not listen on port " + port);
 			System.exit(-1);
 		}
@@ -58,9 +58,6 @@ public class proxyd {
         	// Create a thread to forward the request
         	new RequestThread(client).start();
 		}
-		
-		// Clean up
-		serverSocket.close();
 	}
 	
 	/**
@@ -81,37 +78,26 @@ public class proxyd {
 		// The response thread's behavior while running
 		public void run() {
 			try {
-				// Char buffer (requests are always text only)
-				char[] buff = new char[4048];
-				BufferedReader fromClient = new BufferedReader(new InputStreamReader(client.getInputStream()));
+				// Byte buffer (POST requests can be binary)
+				byte[] buff = new byte[8196];
+				InputStream fromClient = client.getInputStream();
 				
-				// Read the request and check the contents
-				int length = (client.isClosed()) ? 0 : fromClient.read(buff); 
-				
-				if (length > 0) {
+				// Read the request as long as there is data coming through
+				for (int length; (length = fromClient.read(buff)) > 0;) {
 					
-					// Print the request
-					String request = new String(buff, 0, length);
-					System.out.println("REQUEST");
-					System.out.println("-------");
-					System.out.println(request);
+					// Parse request for host name 
+					String hostname = parseRequestForHostname(buff, length);
 					
-					// Parse request for hostname
-					String[] lines = request.split("\n");	// Split the headers into separate lines
-					String[] tokens = lines[1].split(" ");	// Split the "Host: ..." header on the space
-					String hostname = tokens[1].trim();		// Take the second token as the hostname
+					// Resolve address of host through cache or DNS lookup
+					String hostAddress = resolveHostname(hostname);
 					
-					// Do a DNS lookup of intended host
-					InetAddress address = InetAddress.getByName(hostname);
-					String hostAddress = address.getHostAddress();
-					
-					// Open a connection with the server
+					// Open a connection with the host
 					Socket host = new Socket(hostAddress, 80);
 					
-					// Spawn a response thread
+					// Spawn a thread to handle the response
 					new ResponseThread(client, host).start();
 
-					// Write the request to the host
+					// Write the request to the host (flush after each byte)
 					OutputStream toHost = host.getOutputStream();
 					for (int i = 0; i < length; i++) {
 						toHost.write(buff[i]);
@@ -120,8 +106,48 @@ public class proxyd {
 				}
 			}
 			catch (IOException e) {
-				System.err.println("******REQUEST ERROR*******");
 				e.printStackTrace();
+			}
+		}
+		
+		// This helper prints the request, parses it, and returns the host name
+		private String parseRequestForHostname(byte[] buff, int length) throws IOException {
+			// Print the request
+			String request = new String(buff, 0, length);
+			System.out.println("REQUEST");
+			System.out.println("-------");
+			System.out.println(request);
+			
+			// Parse request for host name
+			String[] lines = request.split("\n");		// Split the headers into separate lines
+			for (int i = 0; i < lines.length; i++) {	// Find the "Host" header
+				if (lines[i].contains("Host: ")) {
+					String[] tokens = lines[1].split(" ");	// Split the "Host: ..." header on the space
+					return tokens[1].trim();				// Take the second token as the host name
+				}
+			}
+			throw new IOException("Request is missing host name");
+		}
+		
+		// This helper resolves the address of the host through the cache or a DNS lookup
+		private String resolveHostname(String hostname) throws UnknownHostException {
+			// Search the cache for the address before doing a DNS lookup
+			if (!proxyd.cache.containsKey(hostname)) {
+				InetAddress address = InetAddress.getByName(hostname);
+				String hostAddress = address.getHostAddress();
+				
+				// Cache the result
+				proxyd.cache.put(hostname, hostAddress);
+				
+				// Start the timer to discard it after 30s
+				new CacheTimerThread(hostname).start();
+				
+				// Return the resolved address
+				return hostAddress;
+			}
+			else {	// The host name is in the cache
+				// Return cached address
+				return proxyd.cache.get(hostname);
 			}
 		}
 	}
@@ -148,9 +174,9 @@ public class proxyd {
 			byte[] buff = new byte[8196];
             
 			try {
-				// The stream for reading from the host
+				// The stream for reading the response from the host
 				InputStream fromServer = host.getInputStream();
-				// The stream for writing to the client
+				// The stream for writing the response to the client
 				OutputStream toClient = client.getOutputStream();
 		        
 				// As long as the host is putting out data, write it to the client
@@ -159,16 +185,30 @@ public class proxyd {
 						toClient.write(buff, 0, length);
 					}
 				}
-				
-				// Close connections
-				client.close();
-				host.close();
             } 
 			catch (IOException e) {
-            	System.err.println("******RESPONSE ERROR*******");
 				e.printStackTrace();
 			}
 		}
 	}
-
+	
+	private static class CacheTimerThread extends Thread {
+		
+		String hostname;
+		
+		public CacheTimerThread(String hostname) {
+			this.hostname = hostname;
+		}
+		
+		public void run() {
+			try {
+				Thread.sleep(30000);
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+			finally {
+				proxyd.cache.remove(hostname);
+			}
+		}
+	}
 }
