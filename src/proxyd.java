@@ -76,10 +76,8 @@ public class proxyd {
 			super("RequestThread" + threadCount);
 			this.threadCount = threadCount;
 			this.client = client;
-			if (threadCount == 2) {
-				System.out.println("RequestThread " + threadCount + " has started");
-				System.out.flush();
-			}
+			System.out.println("RequestThread " + threadCount + " has started");
+			System.out.flush();
 		}
 
 		// The response thread's behavior while running
@@ -122,12 +120,10 @@ public class proxyd {
 		private String parseRequestForHostname(byte[] buff, int length, String lastHost) throws IOException {
 			// Print the request
 			String request = new String(buff, 0, length);
-			if (threadCount == 2) {
-				System.out.println("REQUEST by " + threadCount);
-				System.out.println("-------");
-				System.out.println(request);
-				System.out.flush();
-			}
+			System.out.println("REQUEST by " + threadCount);
+			System.out.println("-------");
+			System.out.println(request);
+			System.out.flush();
 			
 			// Parse request for host name
 			String[] lines = request.split("\n");		// Split the headers into separate lines
@@ -137,6 +133,7 @@ public class proxyd {
 					return tokens[1].trim();				// Take the second token as the host name
 				}
 			}
+			
 			System.err.println("Request is missing host name, sent to " + lastHost);
 			return lastHost;
 		}
@@ -166,7 +163,6 @@ public class proxyd {
 	
 	/**
 	 * This class writes the response from the host back to the client.
-	 * The socket connections are closed when complete.
 	 */
 	private static class ResponseThread extends Thread {
 		
@@ -176,15 +172,13 @@ public class proxyd {
 		
 		// Constructor takes client and host sockets
 		public ResponseThread(Socket client, Socket host, int threadCount) {
-	        super("ResponseThread");
+	        super("ResponseThread" + threadCount);
 	        this.threadCount = threadCount;
 	        this.client = client;
 	        this.host = host;
 	        
-	        if (threadCount == 2) {
-	        	System.out.println("ResponseThread Spawned for " + threadCount);
-				System.out.flush();
-	        }
+	        System.out.println("ResponseThread Spawned for " + threadCount);
+			System.out.flush();
 	    }
 		
 		// Handles responses from the host
@@ -198,23 +192,20 @@ public class proxyd {
 				// The stream for writing the response to the client
 				OutputStream toClient = client.getOutputStream();
 
-				if (threadCount == 2) {
-					System.out.println("RESPONSE TO " + threadCount);
-					System.out.flush();
-				}
+				System.out.println("RESPONSE TO " + threadCount);
+				System.out.flush();
 				
 				boolean open = connectionsOpen();
 				// As long as the host is putting out data, write it to the client
 				for (int length; open && (length = fromServer.read(buff)) != -1; open = connectionsOpen()) {
 					// Write response to client
-					if (!client.isClosed()) {
-						toClient.write(buff, 0, length);
+					for (int i = 0; i < length; i++) {
+						toClient.write(buff[i]);
+						toClient.flush();
 					}
+					//toClient.write(buff, 0, length);
+					//toClient.flush();
 				}
-				
-				//host.shutDownOutput
-				host.close();
-				client.close();
             } 
 			catch (IOException e) {
 				e.printStackTrace();
@@ -223,11 +214,6 @@ public class proxyd {
 		
 		private boolean connectionsOpen() {
 			return !client.isClosed() && !host.isClosed();
-		}
-		
-		private boolean shouldKeepAlive(String response) {
-			return (response.contains("Connection:") &&
-					(response.contains("Keep-Alive") || response.contains("keep-alive")));
 		}
 	}
 	
