@@ -234,14 +234,43 @@ public class proxyd {
 			byte[] buff = new byte[8196];
             
 			try {
+				// Turn off keep alive
+				host.setKeepAlive(false);
+				
 				// The stream for reading the response from the host
 				InputStream fromHost = host.getInputStream();
 				// The stream for writing the response to the client
 				OutputStream toClient = client.getOutputStream();
-
 				try {
 					// As long as the host is putting out data, write it to the client
 					for (int length; (length = fromHost.read(buff)) != -1;) {
+						//String response = new String(buff, 0, length);
+						
+						/*
+						if (response.contains("Connection:")) {
+							response = response.replaceAll("Connection: *\n", "Connection: close\n");
+						}
+						
+						if (response.contains("Keep-Alive:")) {
+							response = response.replaceAll("Keep-Alive: *\n", "");
+						}
+						
+						if (response.contains("Content-Length:")) {
+							String header = "Content-Length:";
+							int headerStart = response.indexOf(header);
+							header = response.substring(headerStart,
+									response.indexOf(System.lineSeparator(), headerStart) + 1);
+							int contentLength = Integer.parseInt(header.split(" ")[1].trim());
+							
+						}
+						
+						//System.out.println("RESPONSE");
+						//System.out.println("--------");
+						//System.out.println(response.substring(0, 120));
+						
+						//byte[] bytes = response.getBytes();
+						 */
+						
 						// Write response to client
 						for (int i = 0; i < length; i++) {
 							toClient.write(buff[i]);
