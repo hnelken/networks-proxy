@@ -3,8 +3,11 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketException;
 import java.net.UnknownHostException;
+import java.util.HashMap;
 import java.util.Hashtable;
+import java.util.Map;
 import java.net.InetAddress;
 
 /**
@@ -68,16 +71,15 @@ public class proxyd {
 	private static class RequestThread extends Thread {
 
 		// The socket the request was made on
+		private int threadNum;
 		private int threadCount;
 		private final Socket client;
 
 		// The constructor takes the socket the request was made on
-		public RequestThread(Socket client, int threadCount) {
-			super("RequestThread" + threadCount);
-			this.threadCount = threadCount;
+		public RequestThread(Socket client, int threadNum) {
+			super("RequestThread" + threadNum);
+			this.threadCount = 0;
 			this.client = client;
-			System.out.println("RequestThread " + threadCount + " has started");
-			System.out.flush();
 		}
 
 		// The response thread's behavior while running
@@ -86,35 +88,38 @@ public class proxyd {
 				// Byte buffer (POST requests can be binary)
 				byte[] buff = new byte[8196];
 				InputStream fromClient = client.getInputStream();
-				String hostname = "www.case.edu";
 				
 				// Read the request as long as there is data coming through
 				for (int length; (length = fromClient.read(buff)) > 0;) {
+					// Get info about the request
+					HashMap<String, String> info =
+							parseAndCleanRequest(buff, length);
 					
-					// Clean the connection header in the request
-					String request = cleanRequest(buff, length);
-					
-					// Parse request for host name 
-					hostname = parseRequestForHostname(request, hostname);
-					
-					/*
-					// Resolve address of host through cache or DNS lookup
-					String hostAddress = resolveHostname(hostname);
-					
-					// Open a connection with the host on the HTTP port
-					Socket host = new Socket(hostAddress, 80);
-					
-					// Spawn a thread to handle the response
-					new ResponseThread(client, host, threadCount).start();
-
-					// Write the request to the host (flush after each byte)
-					byte[] bytes = request.getBytes();
-					OutputStream toHost = host.getOutputStream();
-					for (int i = 0; i < bytes.length; i++) {
-						toHost.write(bytes[i]);
-						toHost.flush();
+					if (info != null) {
+						// Resolve address of host through cache or DNS lookup
+						String hostname = info.get("hostname");
+						String hostAddress = resolveHostname(hostname);
+						
+						// Open a connection with the host on the HTTP port
+						Socket host = new Socket(hostAddress, 80);
+	
+						byte[] bytes = info.get("request").getBytes();
+	
+						// Write the request to the host (flush after each byte)
+						OutputStream toHost = host.getOutputStream();
+						for (int i = 0; i < bytes.length; i++) {
+							toHost.write(bytes[i]);
+							toHost.flush();
+						}
+						
+						String threadName = threadNum + "." + threadCount++;
+						System.out.println("Request " + threadName);
+						System.out.println(info.get("request"));
+						System.out.flush();
+						
+						// Spawn a thread to handle the response
+						new ResponseThread(client, host, threadName).start();
 					}
-					*/
 				}
 			}
 			catch (IOException e) {
@@ -125,58 +130,62 @@ public class proxyd {
 		/**
 		 * Removes any "keep-alive" headers and inserts a "Connection: close" line in the request
 		 */
-		private String cleanRequest(byte[] buff, int length) {
+		private HashMap<String, String> parseAndCleanRequest(byte[] buff, int length) {
 
+			// Prepare result hash
+			HashMap<String, String> requestInfo = new HashMap<String, String>();
+			
 			// Convert the request to a string
 			String request = new String(buff, 0, length);
 			
 			// If its a text based request
-			if (request.contains("HTTP ")) {
-				
-				// Find any existing "Connection" header
-				String header = "Connection: ";
-				int headerStart = request.indexOf(header);
-				
-				// If there is one:
-				if (headerStart != -1) {
-					// Replace it with a "Connection: close" header
-					request.replace("Connection: keep-alive", "Connection: close");
-					request.replace("Connection: Keep-Alive", "Connection: close");
-					
-					// And remove any "Keep-Alive" header lines there may be
-					request.replaceAll("Keep-Alive: *\n", "");
-				}
-				else {	// Otherwise insert a "Connection: close" header at the end
-					int insertIndex = header.indexOf(System.lineSeparator(), header.lastIndexOf(':'));
-					String top = request.substring(0, insertIndex);
-					String bottom = request.substring(insertIndex);
-					request = top + "\nConnection: close" + bottom;
-				}
-			}
+			if (request.contains("GET")) {
 
-			// Print the request
-			System.out.println("CLEANED REQUEST by " + threadCount);
-			System.out.println("-------");
-			System.out.println(request);
-			System.out.flush();
-			
-			return request;
+				// Parse the request while building a new version
+				StringBuilder requestBuilder = new StringBuilder();
+				String[] lines = request.split(System.lineSeparator());
+				for (int i = 0; i < lines.length; i++) {
+					
+					// Parse for Host header
+					if (lines[i].contains("Host: ")) {
+						// Split the "Host: ..." header on the space
+						String[] tokens = lines[1].split(" ");
+						
+						// Take the second token as the host name
+						requestInfo.put("hostname", tokens[1].trim());
+					}
+					// Clean the line otherwise
+					requestBuilder.append(cleanRequestLine(i, lines));
+				}
+				// Add the cleaned request to the request info
+				requestInfo.put("request", requestBuilder.toString());
+				return requestInfo;
+			}
+			// Not going to send this request
+			return null;
 		}
 		
-		// This helper prints the request, parses it, and returns the host name
-		private String parseRequestForHostname(String request, String lastHost) throws IOException {
+		// This cleans a request line in case it is a "Connection:" header
+		private String cleanRequestLine(int line, String[] lines) {
 			
-			// Split the request into separate header lines for parsing
-			String[] lines = request.split("\n");
-			for (int i = 0; i < lines.length; i++) {	
-				if (lines[i].contains("Host: ")) {						// Find the "Host" header
-					String[] tokens = lines[1].split(" ");				// Split the "Host: ..." header on the space
-					return tokens[1].trim();							// Take the second token as the host name
-				}
+			StringBuilder lineBuilder = new StringBuilder();
+			
+			// Append the "Connection: close" header right before the end
+			if (line == lines.length - 1) {
+				lineBuilder.append("Connection: close");
+				lineBuilder.append(System.lineSeparator());
 			}
 			
-			System.err.println("Request is missing host name, sent to " + lastHost);
-			return lastHost;
+			// Append all non-connection related headers
+			if (!lines[line].contains("Connection:") &&
+					!lines[line].contains("Keep-Alive:") &&
+					!lines[line].contains("Proxy-Connection:")) {
+				
+				lineBuilder.append(lines[line]);
+				lineBuilder.append(System.lineSeparator());
+			}
+			// Return the cleaned line
+			return lineBuilder.toString();
 		}
 		
 		// This helper resolves the address of the host through the cache or a DNS lookup
@@ -210,21 +219,17 @@ public class proxyd {
 		
 		// The client and host sockets
 		private final Socket client, host;
-		private int threadCount;
 		
 		// Constructor takes client and host sockets
-		public ResponseThread(Socket client, Socket host, int threadCount) {
-	        super("ResponseThread" + threadCount);
-	        this.threadCount = threadCount;
+		public ResponseThread(Socket client, Socket host, String threadName) {
+	        super("ResponseThread" + threadName);
 	        this.client = client;
 	        this.host = host;
-	        
-	        System.out.println("ResponseThread Spawned for " + threadCount);
-			System.out.flush();
 	    }
 		
 		// Handles responses from the host
 		public void run() {
+			
 			// Data buffer (responses can be binary data)
 			byte[] buff = new byte[8196];
             
@@ -234,25 +239,32 @@ public class proxyd {
 				// The stream for writing the response to the client
 				OutputStream toClient = client.getOutputStream();
 
-				System.out.println("RESPONSE TO " + threadCount);
-				System.out.flush();
-				
-				// As long as the host is putting out data, write it to the client
-				for (int length; (length = fromHost.read(buff)) != -1;) {
-					// Write response to client
-					for (int i = 0; i < length; i++) {
-						toClient.write(buff[i]);
-						toClient.flush();
+				try {
+					// As long as the host is putting out data, write it to the client
+					for (int length; (length = fromHost.read(buff)) != -1;) {
+						// Write response to client
+						for (int i = 0; i < length; i++) {
+							toClient.write(buff[i]);
+							toClient.flush();
+						}
 					}
+					fromHost.close();
 				}
-
-				// Non-persistent with host, close up host connections
-				System.out.println("Closing host connections");
-				fromHost.close();
-				host.close();
+				catch (SocketException e) {
+					System.err.println("****ERROR-" + this.getName() + "****");
+					e.printStackTrace();
+				}
             } 
 			catch (IOException e) {
 				e.printStackTrace();
+			}
+			finally {
+				// Non-persistent with host, close up host connection
+				try {
+					host.close();
+				} catch (IOException e) {
+					e.printStackTrace();
+				}
 			}
 		}
 	}
