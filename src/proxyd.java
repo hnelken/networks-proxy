@@ -7,18 +7,18 @@ import java.net.SocketException;
 import java.net.UnknownHostException;
 import java.util.HashMap;
 import java.util.Hashtable;
-import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.net.InetAddress;
 
 /**
- * This class serves as a simple web proxy that accepts GET and POST requests.
- * Requests spawn a thread that forwards the request and then spawns a response thread.
- * @author Harry Nelken
+ * This class serves as a simple web proxy that accepts GET requests from browsers.
+ * Requests spawn a thread that forwards the request and a thread to write back the response.
+ * Persistent connections are supported with the client. Host connections are made to be closed.
+ * @author Harry Nelken (hrn10)
  */
 public class proxyd {
 
-	private static int threadCount = 0;
-	private static Hashtable<String, String> cache = new Hashtable<String, String>();
+	private static Hashtable<String, String> cache;
 	
 	/**
 	 * This process accepts all requests and spawns the necessary request threads.
@@ -26,6 +26,9 @@ public class proxyd {
 	 * @throws IOException If an IOException occurs working with sockets.
 	 */
 	public static void main(String[] args) throws IOException {
+		
+		// Thread count
+		int threadCount = 0;
 		
 		// The socket between the client and this proxy
 		ServerSocket serverSocket = null;
@@ -54,6 +57,9 @@ public class proxyd {
 			System.err.println("Could not listen on port " + port);
 			System.exit(-1);
 		}
+		
+		// Initialize proxy
+		proxyd.cache = new Hashtable<String, String>();
 
 		// Start listening for requests
 		while (listening) {
@@ -71,15 +77,20 @@ public class proxyd {
 	private static class RequestThread extends Thread {
 
 		// The socket the request was made on
-		private int threadNum;
-		private int threadCount;
 		private final Socket client;
 
+		// This thread's number
+		private int threadNum;
+		
+		// Number of response threads
+		private int threadCount;
+		
 		// The constructor takes the socket the request was made on
 		public RequestThread(Socket client, int threadNum) {
-			super("RequestThread" + threadNum);
-			this.threadCount = 0;
+			super("RequestThread#" + threadNum);
 			this.client = client;
+			this.threadNum = threadNum;
+			this.threadCount = 0;
 		}
 
 		// The response thread's behavior while running
@@ -112,13 +123,12 @@ public class proxyd {
 							toHost.flush();
 						}
 						
-						String threadName = threadNum + "." + threadCount++;
-						System.out.println("Request " + threadName);
+						System.out.println("Request ");
 						System.out.println(info.get("request"));
 						System.out.flush();
 						
 						// Spawn a thread to handle the response
-						new ResponseThread(client, host, threadName).start();
+						new ResponseThread(client, host, threadNum + "." + threadCount++).start();
 					}
 				}
 			}
@@ -165,7 +175,9 @@ public class proxyd {
 			return null;
 		}
 		
-		// This cleans a request line in case it is a "Connection:" header
+		/**
+		 *  This cleans a request line in case it is a "Connection:" header
+		 */
 		private String cleanRequestLine(int line, String[] lines) {
 			
 			StringBuilder lineBuilder = new StringBuilder();
@@ -192,6 +204,7 @@ public class proxyd {
 		private String resolveHostname(String hostname) throws UnknownHostException {
 			// Search the cache for the address before doing a DNS lookup
 			if (!proxyd.cache.containsKey(hostname)) {
+				// Address not in cache, do a lookup
 				InetAddress address = InetAddress.getByName(hostname);
 				String hostAddress = address.getHostAddress();
 				
@@ -222,7 +235,7 @@ public class proxyd {
 		
 		// Constructor takes client and host sockets
 		public ResponseThread(Socket client, Socket host, String threadName) {
-	        super("ResponseThread" + threadName);
+			super("ResponseThread#" + threadName);
 	        this.client = client;
 	        this.host = host;
 	    }
@@ -244,39 +257,13 @@ public class proxyd {
 				try {
 					// As long as the host is putting out data, write it to the client
 					for (int length; (length = fromHost.read(buff)) != -1;) {
-						//String response = new String(buff, 0, length);
-						
-						/*
-						if (response.contains("Connection:")) {
-							response = response.replaceAll("Connection: *\n", "Connection: close\n");
-						}
-						
-						if (response.contains("Keep-Alive:")) {
-							response = response.replaceAll("Keep-Alive: *\n", "");
-						}
-						
-						if (response.contains("Content-Length:")) {
-							String header = "Content-Length:";
-							int headerStart = response.indexOf(header);
-							header = response.substring(headerStart,
-									response.indexOf(System.lineSeparator(), headerStart) + 1);
-							int contentLength = Integer.parseInt(header.split(" ")[1].trim());
-							
-						}
-						
-						//System.out.println("RESPONSE");
-						//System.out.println("--------");
-						//System.out.println(response.substring(0, 120));
-						
-						//byte[] bytes = response.getBytes();
-						 */
-						
 						// Write response to client
 						for (int i = 0; i < length; i++) {
 							toClient.write(buff[i]);
 							toClient.flush();
 						}
 					}
+					// Finished getting from host
 					fromHost.close();
 				}
 				catch (SocketException e) {
